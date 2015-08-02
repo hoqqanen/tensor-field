@@ -1,3 +1,6 @@
+var DEBUG_MODE = false;
+var DRAW_PATHS = true;
+
 var utils = {
   average: function(A) {
     return this.sum(A)/A.length;
@@ -5,11 +8,18 @@ var utils = {
   clamp: function(x, min, max) {
     return Math.max(min, Math.min(max, x));
   },
+  closestPoints: function(p, points, n) {
+    var me = this;
+    return points.sort(function (p1, p2) {
+      return me.distance(p1, p) - utils.distance(p2, p);
+    }).slice(0,n);
+  },
   distance: function(p1, p2) {
     var dx = p1.x - p2.x;
     var dy = p1.y - p2.y;
     return Math.sqrt(dx * dx + dy * dy);
   },
+  identity: function(x) {return x;},
   sign: function(x) {
     return x < 0 ? -1 : 1;
   },
@@ -17,30 +27,68 @@ var utils = {
     return A.reduce(function(acc, x) {
         return acc + x;
     });
+  },
+  /**
+    * A: array of T
+    * weight: function from T -> number, preferably in range [0,1]
+    * opt_accessor: function from T -> number
+    */
+  weightedAverage: function(A, weight, opt_accessor) {
+    var accessor = opt_accessor || utils.identity;
+    return this.sum(A.map(function (a) {
+      return accessor(a) * weight(a);
+    }));
   }
 }
 
 $(document).ready(function() {
-  var DEBUG_MODE = false;
-
   if (!DEBUG_MODE) {
     $("#debug").css("visibility", "hidden");
   }
 
-  var c = document.getElementById("tensorfield");
-  var ctx = c.getContext("2d");
-  // TODO: Allow selection of images/progression of levels.
-  // Possibly allow uploading?
-  var img = document.getElementById("img_grid");
-  c.width = img.width;
-  c.height = img.height;
-  ctx.drawImage(img,0,0);
-
   var game = {
-    field: ctx.getImageData(0,0,600,800),
+    ctx: undefined,
+    initField: function(data) {
+      var c = document.getElementById("tensorfield");
+      this.ctx = c.getContext("2d");
+      if (data.image) {
+        var img = document.getElementById("img_grid");
+        c.width = data.width;
+        c.height = data.height;
+        this.ctx.drawImage(img,0,0, data.width, data.height);
+      } else if (data.points && data.width && data.height) {
+        c.width = data.width;
+        c.height = data.height;
+        var d = this.ctx.createImageData(c.width,c.height);
+        for (var i = 0; i < data.width; i++) {
+          for (var j = 0; j < data.height; j++) {
+            var nPoints = 3; // triangulize
+            var point = {x: i, y: j};
+            var closest = utils.closestPoints(point, data.points, nPoints);
+            var distanceSum = utils.sum(closest.map(function(p) {
+              return utils.distance(p, point);
+            }));
+            var value = Math.floor(utils.weightedAverage(closest, function (p) {
+              return 1 - (utils.distance(point, p) / distanceSum);
+            }, function (p) { return p.value; }) / (nPoints - 1));
+
+            var dataIndex = 4 * (i + c.width * j);
+            d.data[dataIndex] = value; d.data[dataIndex + 1] = value; d.data[dataIndex + 2] = value; d.data[dataIndex + 3] = 255;
+          }
+        }
+        this.ctx.putImageData(d, 0, 0);
+      }
+      this.field = this.ctx.getImageData(0,0,c.width,c.height);
+    },
+    field: undefined,
     getFieldValue: function(point) {
       var index = 4 * (point.x + this.field.width * point.y);
       var safeIndex = utils.clamp(index, 0, 4 * this.field.width * this.field.height);
+      if (DRAW_PATHS) {
+        var d = this.field;
+        d.data[safeIndex + 2] = 255;
+        this.ctx.putImageData(d, 0, 0);
+      }
       return this.field.data[safeIndex];
     },
     /*
@@ -64,7 +112,7 @@ $(document).ready(function() {
       var S = utils.sum(deviations);
       var ratios = deviations.map(function(d) {
         return d/S;
-      })
+      });
       return utils.sum(
         neighbors.map(function(n, i) {
           return me.getFieldValue(n)*ratios[i];
@@ -155,5 +203,26 @@ $(document).ready(function() {
       game.reset();
     }
 
+  });
+
+  var randomPoints = [1,2,3,4,4,4,4,4,4,4,4].map(function() {
+    return {
+      x: Math.random()*400,
+      y: Math.random()*400,
+      value: Math.random()*255
+    }
+  });
+  var radialGradient = [
+    {x: 200, y: 200, value: -30},
+    {x: 400, y: 400, value: 255},
+    {x: 0, y: 400, value: 255},
+    {x: 400, y: 0, value: 255},
+    {x: 0, y: 0, value: 255}
+  ];
+
+  game.initField({
+    points: radialGradient,
+    width: 400,
+    height: 400
   });
 });
